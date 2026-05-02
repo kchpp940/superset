@@ -32,6 +32,7 @@ export { normalizeTimeColumn } from './normalizeTimeColumn';
 export { default as extractQueryFields } from './extractQueryFields';
 export * from './getXAxis';
 export * from './getClientErrorObject';
+export * from './responseUtils';
 
 export * from './types/AnnotationLayer';
 export * from './types/QueryFormData';

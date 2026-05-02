@@ -219,6 +219,26 @@ class HeaderDataType(TypedDict):
     execution_id: str | None
 
 
+class WebhookHeaderDataType(TypedDict):
+    notification_format: str | None
+    notification_type: str | None
+    notification_source: str | None
+    chart_id: int | None
+    dashboard_id: int | None
+
+
+def extract_webhook_header(
+    header_data: HeaderDataType,
+) -> WebhookHeaderDataType:
+    return {
+        "notification_format": header_data.get("notification_format"),
+        "notification_type": header_data.get("notification_type"),
+        "notification_source": header_data.get("notification_source"),
+        "chart_id": header_data.get("chart_id"),
+        "dashboard_id": header_data.get("dashboard_id"),
+    }
+
+
 class DatasourceDict(TypedDict):
     type: str  # todo(hugh): update this to be DatasourceType
     id: int | str

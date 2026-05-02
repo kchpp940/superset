@@ -27,6 +27,12 @@ import {
   RefObject,
 } from 'react';
 import type { ChartCustomization, JsonObject } from '@superset-ui/core';
+import {
+  getCachedDttm,
+  getIsCached,
+  getQueriedDttm,
+  getRowCount,
+} from '@superset-ui/core/query';
 import { styled } from '@apache-superset/core/theme';
 import { t } from '@apache-superset/core/translation';
 import { debounce } from 'lodash';
@@ -245,14 +251,7 @@ const Chart = (props: ChartProps) => {
   );
   const suppressLoadingSpinner = useIsAutoRefreshing();
 
-  const isCached: boolean[] = useMemo(
-    () =>
-      queriesResponse?.map(
-        // eslint-disable-next-line camelcase
-        (q: JsonObject) => q.is_cached as boolean,
-      ) || [],
-    [queriesResponse],
-  );
+  const isCached: boolean[] = getIsCached(queriesResponse);
 
   const [descriptionHeight, setDescriptionHeight] = useState(0);
   const [height, setHeight] = useState(props.height);
@@ -352,10 +351,7 @@ const Chart = (props: ChartProps) => {
     return DEFAULT_HEADER_HEIGHT;
   }, [headerRef]);
 
-  const queriedDttm: string | null = Array.isArray(queriesResponse)
-    ? (((queriesResponse[queriesResponse.length - 1] as JsonObject)
-        ?.queried_dttm as string | null) ?? null)
-    : null;
+  const queriedDttm: string | null = getQueriedDttm(queriesResponse);
 
   const getChartHeight = useCallback((): number => {
     const headerHeight = getHeaderHeight();
@@ -494,28 +490,10 @@ const Chart = (props: ChartProps) => {
         : formData;
       const resultType = isPivot ? 'post_processed' : 'full';
 
-      let actualRowCount: number | undefined;
       const isTableViz = (formData as JsonObject)?.viz_type === 'table';
-
-      if (
-        isTableViz &&
-        queriesResponse &&
-        queriesResponse.length > 1 &&
-        (queriesResponse[1] as JsonObject)?.data?.[0]?.rowcount
-      ) {
-        actualRowCount = (
-          (queriesResponse[1] as JsonObject).data as JsonObject[]
-        )[0].rowcount as number;
-      } else if ((queriesResponse?.[0] as JsonObject)?.sql_rowcount != null) {
-        actualRowCount = (queriesResponse![0] as JsonObject)
-          .sql_rowcount as number;
-      } else if ((queriesResponse?.[0] as JsonObject)?.rowcount != null) {
-        actualRowCount = (queriesResponse![0] as JsonObject).rowcount as number;
-      } else {
-        actualRowCount = (exportFormData as JsonObject)?.row_limit as
-          | number
-          | undefined;
-      }
+      const actualRowCount: number | undefined = queriesResponse
+        ? getRowCount(queriesResponse, isTableViz)
+        : ((exportFormData as JsonObject)?.row_limit as number | undefined);
 
       // Handle streaming CSV exports based on row threshold
       const shouldUseStreaming =
@@ -632,11 +610,7 @@ const Chart = (props: ChartProps) => {
   }
 
   const isLoading = chartStatus === 'loading';
-  const cachedDttm: string[] =
-    queriesResponse?.map(
-      // eslint-disable-next-line camelcase
-      (q: JsonObject) => q.cached_dttm as string,
-    ) || [];
+  const cachedDttm: string[] = getCachedDttm(queriesResponse);
 
   // Build slice header shape matching SliceHeaderControlsProps
   const sliceForHeader = {

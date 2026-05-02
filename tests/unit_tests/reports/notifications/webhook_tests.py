@@ -23,7 +23,11 @@ from superset.reports.notifications.exceptions import (
     NotificationParamException,
 )
 from superset.reports.notifications.webhook import WebhookNotification
-from superset.utils.core import HeaderDataType
+from superset.utils.core import (
+    HeaderDataType,
+    extract_webhook_header,
+    WebhookHeaderDataType,
+)
 
 
 @pytest.fixture
@@ -38,6 +42,70 @@ def mock_header_data() -> HeaderDataType:
         "slack_channels": None,
         "execution_id": "test-execution-id",
     }
+
+
+def test_extract_webhook_header_basic(mock_header_data: HeaderDataType) -> None:
+    """
+    Test that extract_webhook_header correctly extracts only the required fields
+    and excludes extra fields like owners, slack_channels, and execution_id
+    """
+    result = extract_webhook_header(mock_header_data)
+
+    assert result["notification_format"] == "PNG"
+    assert result["notification_type"] == "Alert"
+    assert result["notification_source"] is None
+    assert result["chart_id"] is None
+    assert result["dashboard_id"] is None
+
+    assert "owners" not in result
+    assert "slack_channels" not in result
+    assert "execution_id" not in result
+
+
+def test_extract_webhook_header_with_chart_id() -> None:
+    """
+    Test that extract_webhook_header correctly extracts chart_id for chart sources
+    """
+    header_data: HeaderDataType = {
+        "notification_format": "CSV",
+        "notification_type": "Report",
+        "owners": [1, 2],
+        "notification_source": "chart",
+        "chart_id": 123,
+        "dashboard_id": None,
+        "slack_channels": ["#alerts"],
+        "execution_id": "chart-exec-123",
+    }
+
+    result: WebhookHeaderDataType = extract_webhook_header(header_data)
+
+    assert result["chart_id"] == 123
+    assert result["dashboard_id"] is None
+    assert result["notification_source"] == "chart"
+    assert result["notification_format"] == "CSV"
+    assert result["notification_type"] == "Report"
+
+
+def test_extract_webhook_header_with_dashboard_id() -> None:
+    """
+    Test that extract_webhook_header correctly extracts dashboard_id for dashboard sources
+    """
+    header_data: HeaderDataType = {
+        "notification_format": "PDF",
+        "notification_type": "Alert",
+        "owners": [1],
+        "notification_source": "dashboard",
+        "chart_id": None,
+        "dashboard_id": 456,
+        "slack_channels": ["#dashboard-alerts"],
+        "execution_id": "dash-exec-456",
+    }
+
+    result = extract_webhook_header(header_data)
+
+    assert result["dashboard_id"] == 456
+    assert result["chart_id"] is None
+    assert result["notification_source"] == "dashboard"
 
 
 def test_get_webhook_url(mock_header_data) -> None:

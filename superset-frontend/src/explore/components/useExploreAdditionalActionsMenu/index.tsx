@@ -34,6 +34,7 @@ import {
   LatestQueryFormData,
   QueryFormData,
   Behavior,
+  getRowCount,
 } from '@superset-ui/core';
 import { css, styled, useTheme } from '@apache-superset/core/theme';
 import { t } from '@apache-superset/core/translation';
@@ -345,27 +346,14 @@ export const useExploreAdditionalActionsMenu = (
   const exportCSV = useCallback(() => {
     if (!canDownloadCSV) return null;
 
-    // Determine row count for streaming threshold check
-    let actualRowCount;
     const isTableViz = latestQueryFormData?.viz_type === 'table';
     const queriesResponse = chart?.queriesResponse;
 
-    if (
-      isTableViz &&
-      queriesResponse &&
-      queriesResponse.length > 1 &&
-      queriesResponse[1]?.data?.[0]?.rowcount
-    ) {
-      actualRowCount = queriesResponse[1].data[0].rowcount;
-    } else if (queriesResponse && queriesResponse[0]?.sql_rowcount != null) {
-      actualRowCount = queriesResponse[0].sql_rowcount;
-    } else if (queriesResponse && queriesResponse[0]?.rowcount != null) {
-      actualRowCount = queriesResponse[0].rowcount;
-    } else {
+    let actualRowCount = getRowCount(queriesResponse, isTableViz);
+    if (actualRowCount === 0) {
       actualRowCount = latestQueryFormData?.row_limit;
     }
 
-    // Check if streaming should be used
     const shouldUseStreaming =
       actualRowCount && actualRowCount >= streamingThreshold;
 

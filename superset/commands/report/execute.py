@@ -66,6 +66,7 @@ from superset.reports.models import (
 )
 from superset.reports.notifications import create_notification
 from superset.reports.notifications.base import NotificationContent
+from superset.reports.notifications.header_data import build_header_data
 from superset.reports.notifications.exceptions import (
     NotificationError,
     NotificationParamException,
@@ -585,36 +586,7 @@ class BaseReportState:
             ) from ex
 
     def _get_log_data(self) -> HeaderDataType:
-        chart_id = None
-        dashboard_id = None
-        report_source = None
-        slack_channels = None
-        if self._report_schedule.chart:
-            report_source = ReportSourceFormat.CHART
-            chart_id = self._report_schedule.chart_id
-        else:
-            report_source = ReportSourceFormat.DASHBOARD
-            dashboard_id = self._report_schedule.dashboard_id
-
-        if self._report_schedule.recipients:
-            slack_channels = [
-                recipient.recipient_config_json
-                for recipient in self._report_schedule.recipients
-                if recipient.type
-                in [ReportRecipientType.SLACK, ReportRecipientType.SLACKV2]
-            ]
-
-        log_data: HeaderDataType = {
-            "notification_type": self._report_schedule.type,
-            "notification_source": report_source,
-            "notification_format": self._report_schedule.report_format,
-            "chart_id": chart_id,
-            "dashboard_id": dashboard_id,
-            "owners": self._report_schedule.owners,
-            "slack_channels": slack_channels,
-            "execution_id": str(self._execution_id),
-        }
-        return log_data
+        return build_header_data(self._report_schedule, self._execution_id)
 
     def _get_notification_content(self) -> NotificationContent:  # noqa: C901
         """

@@ -31,6 +31,7 @@ from superset.reports.notifications.exceptions import (
     NotificationUnprocessableException,
 )
 from superset.utils import json
+from superset.utils.core import extract_webhook_header
 from superset.utils.decorators import statsd_gauge
 
 logger = logging.getLogger(__name__)
@@ -59,13 +60,7 @@ class WebhookNotification(BaseNotification):
             raise NotificationParamException("Webhook URL is required") from ex
 
     def _get_req_payload(self) -> dict[str, Any]:
-        header_content = {
-            "notification_format": self._content.header_data.get("notification_format"),
-            "notification_type": self._content.header_data.get("notification_type"),
-            "notification_source": self._content.header_data.get("notification_source"),
-            "chart_id": self._content.header_data.get("chart_id"),
-            "dashboard_id": self._content.header_data.get("dashboard_id"),
-        }
+        header_content = extract_webhook_header(self._content.header_data)
         content = {
             "name": self._content.name,
             "header": header_content,

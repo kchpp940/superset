@@ -26,7 +26,11 @@ import {
   useState,
 } from 'react';
 import { t } from '@apache-superset/core/translation';
-import { getExtensionsRegistry, QueryData } from '@superset-ui/core';
+import {
+  getExtensionsRegistry,
+  QueryData,
+  getRowCountFromQueries,
+} from '@superset-ui/core';
 import {
   css,
   styled,
@@ -207,17 +211,11 @@ const SliceHeader = forwardRef<HTMLDivElement, SliceHeaderProps>(
     const rowLimit = Number(formData.row_limit ?? 0);
 
     const isTableChart = formData.viz_type === 'table';
-    const countFromSecondQuery =
-      isTableChart && secondQueryResponse?.data?.[0]?.rowcount;
-
-    const sqlRowCount =
-      countFromSecondQuery != null
-        ? countFromSecondQuery
-        : Number(
-            firstQueryResponse?.sql_rowcount ??
-              firstQueryResponse?.rowcount ??
-              0,
-          );
+    const sqlRowCount = getRowCountFromQueries(
+      firstQueryResponse,
+      secondQueryResponse,
+      isTableChart,
+    );
 
     const canExplore = !editMode && supersetCanExplore;
     const showRowLimitWarning =
