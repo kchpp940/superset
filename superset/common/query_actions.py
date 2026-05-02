@@ -198,6 +198,11 @@ def _get_full(
             "rowcount": payload.get("rowcount"),
             "sql_rowcount": payload.get("sql_rowcount"),
             "detected_currency": payload.get("detected_currency"),
+            "is_cached": payload.get("is_cached"),
+            "cached_dttm": payload.get("cached_dttm"),
+            "queried_dttm": payload.get("queried_dttm"),
+            "cache_key": payload.get("cache_key"),
+            "cache_timeout": payload.get("cache_timeout"),
         }
     return payload
 

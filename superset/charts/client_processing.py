@@ -361,6 +361,7 @@ def apply_client_processing(  # noqa: C901
         query["indexnames"] = list(processed_df.index)
         query["coltypes"] = extract_dataframe_dtypes(processed_df, datasource)
         query["rowcount"] = len(processed_df.index)
+        query["sql_rowcount"] = len(processed_df.index)
 
         # Check if the DataFrame has a default RangeIndex, which should not be shown
         show_default_index = not isinstance(processed_df.index, pd.RangeIndex)

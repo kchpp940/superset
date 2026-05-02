@@ -1966,6 +1966,7 @@ def test_apply_client_processing_json_format():
                 "indexnames": [("Total (Sum)",)],
                 "coltypes": [GenericDataType.STRING],
                 "rowcount": 1,
+                "sql_rowcount": 1,
             }
         ]
     }
@@ -2056,6 +2057,7 @@ COUNT(is_software_dev)
                 "indexnames": [("Total (Sum)",)],
                 "coltypes": [GenericDataType.NUMERIC],
                 "rowcount": 1,
+                "sql_rowcount": 1,
             }
         ]
     }
@@ -2147,6 +2149,7 @@ COUNT(is_software_dev)
                 "indexnames": [0],
                 "coltypes": [GenericDataType.NUMERIC],
                 "rowcount": 1,
+                "sql_rowcount": 1,
             }
         ]
     }
@@ -2382,6 +2385,7 @@ COUNT(is_software_dev)
                 "indexnames": [("Total (Sum)",)],
                 "coltypes": [GenericDataType.NUMERIC],
                 "rowcount": 1,
+                "sql_rowcount": 1,
             },
         ]
     }
@@ -2592,6 +2596,7 @@ def test_apply_client_processing_verbose_map(session: Session):
                 "indexnames": [("Total (Sum)",)],
                 "coltypes": [GenericDataType.NUMERIC],
                 "rowcount": 1,
+                "sql_rowcount": 1,
             }
         ]
     }
@@ -2788,3 +2793,177 @@ def test_apply_client_processing_csv_format_default_na_behavior():
     assert (
         "Alice," in lines[2]
     )  # Second data row should have empty last_name (NA converted to null)
+
+
+def test_apply_client_processing_syncs_rowcount_and_sql_rowcount():
+    """
+    Test that apply_client_processing syncs both rowcount and sql_rowcount
+    after client-side post-processing (e.g., pivot table operations).
+
+    This is a regression test for the bug where only rowcount was updated
+    after post-processing, leading to inconsistent values between rowcount
+    and sql_rowcount, which caused issues in SliceHeader display,
+    CSV export threshold judgment, and Report/Webhook notifications.
+    """
+    # Create a result with different rowcount and sql_rowcount
+    # This simulates a query with row_limit (e.g., row_limit=10, sql_rowcount=100)
+    result = {
+        "queries": [
+            {
+                "result_format": ChartDataResultFormat.JSON,
+                "data": {
+                    "result": [
+                        {
+                            "data": [
+                                {"COUNT(is_software_dev)": 4725},
+                                {"COUNT(is_software_dev)": 1234},
+                            ],
+                            "colnames": ["COUNT(is_software_dev)"],
+                            "coltypes": [0],
+                        }
+                    ]
+                },
+                "rowcount": 2,
+                "sql_rowcount": 100,
+            }
+        ]
+    }
+    form_data = {
+        "datasource": "19__table",
+        "viz_type": "pivot_table_v2",
+        "slice_id": 69,
+        "metrics": [
+            {
+                "aggregate": "COUNT",
+                "column": {
+                    "column_name": "is_software_dev",
+                },
+                "expressionType": "SIMPLE",
+                "label": "COUNT(is_software_dev)",
+            }
+        ],
+        "metricsLayout": "COLUMNS",
+        "groupbyColumns": [],
+        "groupbyRows": [],
+        "aggregateFunction": "Sum",
+    }
+
+    processed_result = apply_client_processing(result, form_data)
+
+    query = processed_result["queries"][0]
+
+    # After pivot processing, both rowcount and sql_rowcount should be
+    # updated to the same value (the processed DataFrame's row count)
+    assert "rowcount" in query
+    assert "sql_rowcount" in query
+    assert query["rowcount"] == query["sql_rowcount"]
+    # The pivot operation should result in 1 row (Total (Sum))
+    assert query["rowcount"] == 1
+
+
+def test_apply_client_processing_table_viz_syncs_rowcount_sql_rowcount():
+    """
+    Test that apply_client_processing syncs both rowcount and sql_rowcount
+    for table visualizations (non-pivot tables).
+    """
+    # Create a result for a table visualization
+    result = {
+        "queries": [
+            {
+                "result_format": ChartDataResultFormat.CSV,
+                "data": "first_name,last_name,count\nJeff,Smith,100\nAlice,Johnson,200\nBob,Williams,300",
+                "rowcount": 3,
+                "sql_rowcount": 1000,
+            }
+        ]
+    }
+    form_data = {
+        "datasource": "1__table",
+        "viz_type": "table",
+        "slice_id": 1,
+        "metrics": [],
+        "groupby": [],
+        "columns": ["first_name", "last_name", "count"],
+    }
+
+    processed_result = apply_client_processing(result, form_data)
+
+    query = processed_result["queries"][0]
+
+    # For table visualization (which doesn't transform rows),
+    # rowcount and sql_rowcount should both be set
+    assert "rowcount" in query
+    assert "sql_rowcount" in query
+    # Table viz doesn't transform data, so both should be updated to the same value
+    assert query["rowcount"] == query["sql_rowcount"]
+
+
+def test_apply_client_processing_multiple_queries_syncs_rowcount_sql_rowcount():
+    """
+    Test that apply_client_processing syncs rowcount and sql_rowcount
+    for all queries when there are multiple queries (e.g., dashboard with multiple charts).
+    """
+    result = {
+        "queries": [
+            {
+                "result_format": ChartDataResultFormat.JSON,
+                "data": {
+                    "result": [
+                        {
+                            "data": [{"COUNT(is_software_dev)": 4725}],
+                            "colnames": ["COUNT(is_software_dev)"],
+                            "coltypes": [0],
+                        }
+                    ]
+                },
+                "rowcount": 1,
+                "sql_rowcount": 100,
+            },
+            {
+                "result_format": ChartDataResultFormat.JSON,
+                "data": {
+                    "result": [
+                        {
+                            "data": [
+                                {"SUM(salary)": 100000},
+                                {"SUM(salary)": 150000},
+                            ],
+                            "colnames": ["SUM(salary)"],
+                            "coltypes": [0],
+                        }
+                    ]
+                },
+                "rowcount": 2,
+                "sql_rowcount": 200,
+            },
+        ]
+    }
+    form_data = {
+        "datasource": "19__table",
+        "viz_type": "pivot_table_v2",
+        "slice_id": 69,
+        "metrics": [
+            {
+                "aggregate": "COUNT",
+                "column": {
+                    "column_name": "is_software_dev",
+                },
+                "expressionType": "SIMPLE",
+                "label": "COUNT(is_software_dev)",
+            }
+        ],
+        "metricsLayout": "COLUMNS",
+        "groupbyColumns": [],
+        "groupbyRows": [],
+        "aggregateFunction": "Sum",
+    }
+
+    processed_result = apply_client_processing(result, form_data)
+
+    # Both queries should have synced rowcount and sql_rowcount
+    for i, query in enumerate(processed_result["queries"]):
+        assert "rowcount" in query, f"Query {i} missing rowcount"
+        assert "sql_rowcount" in query, f"Query {i} missing sql_rowcount"
+        assert (
+            query["rowcount"] == query["sql_rowcount"]
+        ), f"Query {i} rowcount and sql_rowcount not synchronized"
