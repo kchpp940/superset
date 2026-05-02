@@ -1379,3 +1379,345 @@ def test_get_df_payload_invalidates_cache_missing_applied_filter_columns():
     assert mock_cache.is_loaded is False, (
         "Cache should be inv when no applied_filter_columns and query has filters"
     )
+
+
+def test_get_df_payload_cache_hit_preserves_metadata() -> None:
+    """
+    Contract test: When cache is hit (is_cached=True), get_df_payload()
+    must preserve ALL cache metadata fields.
+
+    Ensures these fields are NOT lost when returning cached results:
+    - cache_key: Cache identifier
+    - cached_dttm: When result was cached
+    - queried_dttm: When original query ran
+    - is_cached: Boolean flag (must be True)
+    - sql_rowcount: Row count
+    - rowcount: Row count
+    - query: SQL string
+    - status: Query status
+    - error: Error message (if any)
+    - stacktrace: Stack trace (if any)
+
+    Prevents regression where cached results might have their metadata reset
+    (e.g., is_cached being set to False even though data came from cache).
+    """
+    from superset.common.query_object import QueryObject
+
+    mock_query_context = MagicMock()
+    mock_query_context.force = False
+    mock_datasource = MagicMock()
+    mock_datasource.column_names = ["col1", "col2"]
+
+    processor = QueryContextProcessor(mock_query_context)
+    processor._qc_datasource = mock_datasource
+
+    query_obj = QueryObject(
+        datasource=mock_datasource,
+        columns=["col1", "col2"],
+        metrics=["count"],
+    )
+
+    class MockCacheWithCompleteMetadata:
+        def __init__(self) -> None:
+            self.is_loaded = True
+            self.cache_dttm = "2024-01-20T09:00:00"
+            self.queried_dttm = "2024-01-20T08:00:00"
+            self.is_cached = True
+            self.df = pd.DataFrame({"col1": [1, 2, 3], "col2": ["a", "b", "c"]})
+            self.sql_rowcount = 3
+            self.query = "SELECT col1, col2, COUNT(*) FROM test_table GROUP BY col1, col2"
+            self.status = QueryStatus.SUCCESS
+            self.error_message = None
+            self.stacktrace = None
+            self.cache_timeout = 3600
+            self.cache_value = None
+            self.datasource_uid = "test_datasource"
+            self.applied_template_filters = []
+            self.applied_filter_columns = ["col1"]
+            self.rejected_filter_columns = []
+            self.annotation_data = {}
+            self.set_query_result = MagicMock()
+
+    mock_cache = MockCacheWithCompleteMetadata()
+
+    with patch(
+        "superset.common.query_context_processor.QueryCacheManager"
+    ) as mock_cache_manager:
+        mock_cache_manager.get.return_value = mock_cache
+
+        with patch.object(query_obj, "validate", return_value=None):
+            with patch.object(processor, "query_cache_key", return_value="cache-key-12345"):
+                with patch.object(processor, "get_cache_timeout", return_value=3600):
+                    result = processor.get_df_payload(query_obj, force_cached=False)
+
+    assert result["cache_key"] == "cache-key-12345"
+    assert result["cached_dttm"] == "2024-01-20T09:00:00"
+    assert result["queried_dttm"] == "2024-01-20T08:00:00"
+    assert result["is_cached"] is True
+    assert result["sql_rowcount"] == 3
+    assert result["rowcount"] == 3
+    assert (
+        result["query"]
+        == "SELECT col1, col2, COUNT(*) FROM test_table GROUP BY col1, col2"
+    )
+    assert result["status"] == QueryStatus.SUCCESS
+    assert result["error"] is None
+    assert result["stacktrace"] is None
+
+
+def test_get_df_payload_force_cached_returns_cached_metadata() -> None:
+    """
+    Contract test: When force_cached=True (async query cache lookup),
+    get_df_payload() must return results with is_cached=True and preserve metadata.
+
+    This path is used by:
+    - Async query cache fetch
+    - Dashboard cache hits in API (_run_async in ChartDataRestApi)
+
+    Prevents regression where force_cached=True might return data
+    with is_cached=False, causing SliceHeader to show "Not cached"
+    even though data came from cache.
+    """
+    from superset.common.query_object import QueryObject
+
+    mock_query_context = MagicMock()
+    mock_query_context.force = False
+    mock_datasource = MagicMock()
+    mock_datasource.column_names = ["metric"]
+
+    processor = QueryContextProcessor(mock_query_context)
+    processor._qc_datasource = mock_datasource
+
+    query_obj = QueryObject(
+        datasource=mock_datasource,
+        columns=[],
+        metrics=["sum_sales"],
+    )
+
+    class MockForceCachedResult:
+        def __init__(self) -> None:
+            self.is_loaded = True
+            self.is_cached = True
+            self.cache_dttm = "2024-01-25T14:30:00"
+            self.queried_dttm = "2024-01-25T14:30:00"
+            self.df = pd.DataFrame({"sum_sales": [1000000]})
+            self.sql_rowcount = 1
+            self.query = "SELECT SUM(sales) as sum_sales FROM sales_table"
+            self.status = QueryStatus.SUCCESS
+            self.error_message = None
+            self.stacktrace = None
+            self.cache_timeout = 3600
+            self.cache_value = None
+            self.datasource_uid = "sales_datasource"
+            self.applied_template_filters = []
+            self.applied_filter_columns = []
+            self.rejected_filter_columns = []
+            self.annotation_data = {}
+            self.set_query_result = MagicMock()
+
+    mock_cache = MockForceCachedResult()
+
+    with patch(
+        "superset.common.query_context_processor.QueryCacheManager"
+    ) as mock_cache_manager:
+        mock_cache_manager.get.return_value = mock_cache
+
+        with patch.object(query_obj, "validate", return_value=None):
+            with patch.object(processor, "query_cache_key", return_value="async-cache-key"):
+                with patch.object(processor, "get_cache_timeout", return_value=3600):
+                    result = processor.get_df_payload(query_obj, force_cached=True)
+
+    assert result["is_cached"] is True, (
+        "force_cached=True should return results with is_cached=True"
+    )
+    assert result["cache_key"] == "async-cache-key"
+    assert result["cached_dttm"] == "2024-01-25T14:30:00"
+    assert result["queried_dttm"] == "2024-01-25T14:30:00"
+    assert result["sql_rowcount"] == 1
+    assert result["rowcount"] == 1
+    assert result["query"] == "SELECT SUM(sales) as sum_sales FROM sales_table"
+    assert result["status"] == QueryStatus.SUCCESS
+
+
+def test_get_payload_multi_query_cache_metadata_preservation() -> None:
+    """
+    Contract test: When get_payload() returns multiple queries (e.g., table with
+    server pagination), ALL queries must preserve their cache metadata.
+
+    Scenario:
+    - Query 1: Main data query (cached)
+    - Query 2: Row count query (may or may not be cached)
+
+    Both should both queries must retain their individual:
+    - is_cached flags
+    - cache_key values
+    - cached_dttm/queried_dttm timestamps
+    - rowcount/sql_rowcount
+    - query strings
+    - status
+
+    Prevents regression where only the first query's metadata might be applied
+    to all queries, or where metadata gets lost during aggregation.
+    """
+    from superset.common.query_object import QueryObject
+
+    mock_query_context = MagicMock()
+    mock_query_context.force = False
+    mock_query_context.result_type = ChartDataResultType.FULL
+    mock_query_context.result_format = ChartDataResultFormat.JSON
+
+    mock_datasource = MagicMock()
+    mock_datasource.column_names = ["region", "sales"]
+    mock_datasource.uid = "sales_datasource"
+    mock_datasource.cache_timeout = None
+    mock_datasource.database.db_engine_spec.engine = "postgresql"
+    mock_datasource.get_extra_cache_keys.return_value = []
+    mock_datasource.changed_on = None
+
+    main_query = QueryObject(
+        datasource=mock_datasource,
+        columns=["region"],
+        metrics=["sum_sales"],
+        row_limit=10,
+    )
+
+    rowcount_query = QueryObject(
+        datasource=mock_datasource,
+        columns=[],
+        metrics=["count"],
+        row_limit=10,
+    )
+
+    mock_query_context.queries = [main_query, rowcount_query]
+    mock_query_context.cache_values = {
+        "datasource": {"type": "table", "id": 1},
+        "queries": [main_query.to_dict(), rowcount_query.to_dict()],
+        "result_type": "full",
+        "result_format": "json",
+    }
+
+    processor = QueryContextProcessor(mock_query_context)
+    processor._qc_datasource = mock_datasource
+
+    call_count = 0
+
+    def mock_query_cache_key_side_effect(query_obj: QueryObject, **kwargs: Any) -> str:
+        nonlocal call_count
+        if call_count == 0:
+            call_count += 1
+            return "main-query-cache-key"
+        call_count += 1
+        return "rowcount-query-cache-key"
+
+    class MockMainQueryCache:
+        def __init__(self) -> None:
+            self.is_loaded = True
+            self.is_cached = True
+            self.cache_dttm = "2024-01-20T09:00:00"
+            self.queried_dttm = "2024-01-20T09:00:00"
+            self.df = pd.DataFrame({"region": ["North", "South"], "sales": [100, 200]})
+            self.sql_rowcount = 2
+            self.query = "SELECT region, SUM(sales) FROM sales GROUP BY region LIMIT 10"
+            self.status = QueryStatus.SUCCESS
+            self.error_message = None
+            self.stacktrace = None
+            self.cache_timeout = 3600
+            self.cache_value = None
+            self.datasource_uid = "sales_datasource"
+            self.applied_template_filters = []
+            self.applied_filter_columns = []
+            self.rejected_filter_columns = []
+            self.annotation_data = {}
+            self.set_query_result = MagicMock()
+
+    class MockRowcountQueryCache:
+        def __init__(self) -> None:
+            self.is_loaded = True
+            self.is_cached = False
+            self.cache_dttm = None
+            self.queried_dttm = "2024-01-20T10:30:00"
+            self.df = pd.DataFrame({"rowcount": [1000]})
+            self.sql_rowcount = 1
+            self.query = "SELECT COUNT(*) as rowcount FROM sales"
+            self.status = QueryStatus.SUCCESS
+            self.error_message = None
+            self.stacktrace = None
+            self.cache_timeout = 3600
+            self.cache_value = None
+            self.datasource_uid = "sales_datasource"
+            self.applied_template_filters = []
+            self.applied_filter_columns = []
+            self.rejected_filter_columns = []
+            self.annotation_data = {}
+            self.set_query_result = MagicMock()
+
+    cache_get_count = 0
+
+    def mock_cache_manager_get_side_effect(*args: Any, **kwargs: Any) -> Any:
+        nonlocal cache_get_count
+        if cache_get_count == 0:
+            cache_get_count += 1
+            return MockMainQueryCache()
+        cache_get_count += 1
+        return MockRowcountQueryCache()
+
+    with patch(
+        "superset.common.query_context_processor.QueryCacheManager"
+    ) as mock_cache_manager:
+        mock_cache_manager.get.side_effect = mock_cache_manager_get_side_effect
+
+        with patch.object(
+            processor, "query_cache_key", side_effect=mock_query_cache_key_side_effect
+        ):
+            with patch.object(processor, "get_cache_timeout", return_value=3600):
+                with patch(
+                    "superset.common.query_context_processor.get_query_results"
+                ) as mock_get_query_results:
+                    mock_get_query_results.return_value = []
+
+                    with patch.object(
+                        mock_query_context, "get_query_result"
+                    ) as mock_get_query_result:
+                        mock_df = pd.DataFrame({"col1": [1]})
+                        mock_result = MagicMock()
+                        mock_result.df = mock_df
+                        mock_result.query = "SELECT 1"
+                        mock_result.cache_key = "mock-key"
+                        mock_get_query_result.return_value = mock_result
+
+                        with patch(
+                            "superset.common.query_context_processor.security_manager"
+                        ) as mock_security_manager:
+                            mock_security_manager.get_rls_cache_key.return_value = None
+
+                            with patch(
+                                "superset.common.query_context_processor.feature_flag_manager"
+                            ) as mock_ff:
+                                mock_ff.is_feature_enabled.return_value = False
+
+                                result = processor.get_payload(cache_query_context=False)
+
+    queries = result["queries"]
+
+    assert len(queries) == 2
+
+    assert queries[0]["is_cached"] is True
+    assert queries[0]["cache_key"] == "main-query-cache-key"
+    assert queries[0]["cached_dttm"] == "2024-01-20T09:00:00"
+    assert queries[0]["queried_dttm"] == "2024-01-20T09:00:00"
+    assert queries[0]["rowcount"] == 2
+    assert queries[0]["sql_rowcount"] == 2
+    assert (
+        queries[0]["query"]
+        == "SELECT region, SUM(sales) FROM sales GROUP BY region LIMIT 10"
+    )
+    assert queries[0]["status"] == QueryStatus.SUCCESS
+
+    assert queries[1]["is_cached"] is False
+    assert queries[1]["cache_key"] == "rowcount-query-cache-key"
+    assert queries[1]["cached_dttm"] is None
+    assert queries[1]["queried_dttm"] == "2024-01-20T10:30:00"
+    assert queries[1]["rowcount"] == 1
+    assert queries[1]["sql_rowcount"] == 1
+    assert queries[1]["query"] == "SELECT COUNT(*) as rowcount FROM sales"
+    assert queries[1]["status"] == QueryStatus.SUCCESS

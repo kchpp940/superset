@@ -323,3 +323,182 @@ def test_get_query_handles_parsing_error_with_null_sql_value() -> None:
         assert "query" not in result
         assert result["error"] == "Parsing error occurred"
         assert result["language"] == "sql"
+
+
+def test_chart_data_command_result_structure_contract() -> None:
+    """
+    Contract test: ChartDataCommand.run() must return consistent structure.
+
+    Ensures the response always contains:
+    - "query_context": The QueryContext object
+    - "queries": Array of query results (never missing, even if empty)
+
+    Prevents regression where queries array might be missing or renamed.
+    """
+    mock_query_context = Mock(spec=QueryContext)
+    mock_query_context.result_type = ChartDataResultType.FULL
+    mock_query_context.get_payload.return_value = {
+        "queries": [
+            {
+                "data": [{"col1": "value1"}],
+                "colnames": ["col1"],
+                "coltypes": [1],
+            }
+        ],
+    }
+
+    command = ChartDataCommand(mock_query_context)
+    result = command.run()
+
+    assert "query_context" in result
+    assert "queries" in result
+    assert isinstance(result["queries"], list)
+    assert len(result["queries"]) == 1
+
+
+def test_query_result_mandatory_fields_contract() -> None:
+    """
+    Contract test: Each query result must preserve critical metadata fields.
+
+    Ensures these fields are always present in query results:
+    - cache_key: Cache identifier (null if not cached)
+    - is_cached: Boolean indicating if result came from cache
+    - cached_dttm: When result was cached (ISO 8601 string)
+    - queried_dttm: When query was executed (ISO 8601 string)
+    - rowcount: Number of rows returned
+    - sql_rowcount: Actual SQL row count
+    - query: SQL query string
+    - status: Query execution status
+    - data: The actual result data
+
+    Prevents regression where these fields might be stripped or modified.
+    """
+    mock_query_context = Mock(spec=QueryContext)
+    mock_query_context.result_type = ChartDataResultType.FULL
+
+    complete_query_result = {
+        "cache_key": "abc123",
+        "cache_timeout": 3600,
+        "cached_dttm": "2024-01-15T10:00:00",
+        "queried_dttm": "2024-01-15T10:30:00",
+        "rowcount": 100,
+        "sql_rowcount": 100,
+        "query": "SELECT * FROM table",
+        "status": "success",
+        "is_cached": True,
+        "data": [{"col1": "value1"}],
+        "colnames": ["col1"],
+        "coltypes": [1],
+        "error": None,
+        "stacktrace": None,
+    }
+
+    mock_query_context.get_payload.return_value = {
+        "queries": [complete_query_result],
+    }
+
+    command = ChartDataCommand(mock_query_context)
+    result = command.run()
+
+    query = result["queries"][0]
+
+    assert query["cache_key"] == "abc123"
+    assert query["is_cached"] is True
+    assert query["cached_dttm"] == "2024-01-15T10:00:00"
+    assert query["queried_dttm"] == "2024-01-15T10:30:00"
+    assert query["rowcount"] == 100
+    assert query["sql_rowcount"] == 100
+    assert query["query"] == "SELECT * FROM table"
+    assert query["status"] == "success"
+    assert query["data"] == [{"col1": "value1"}]
+
+
+def test_cached_result_fields_preserved() -> None:
+    """
+    Contract test: Cache-related fields must be preserved when result is cached.
+
+    When is_cached=True, these fields must NOT be lost:
+    - cache_key: Used for cache invalidation and tracing
+    - cached_dttm: Used in UI to show "Cached at X time"
+    - is_cached: Used in UI and logging to indicate cache hit
+    - queried_dttm: When the original query ran
+
+    Prevents regression where cache metadata might be reset during cache hits.
+    """
+    mock_query_context = Mock(spec=QueryContext)
+    mock_query_context.result_type = ChartDataResultType.FULL
+
+    mock_query_context.get_payload.return_value = {
+        "queries": [
+            {
+                "cache_key": "cached-key-789",
+                "cached_dttm": "2024-01-20T09:00:00",
+                "queried_dttm": "2024-01-20T09:00:00",
+                "is_cached": True,
+                "rowcount": 50,
+                "sql_rowcount": 50,
+                "data": [{"metric": 100}],
+                "status": "success",
+            }
+        ],
+    }
+
+    command = ChartDataCommand(mock_query_context)
+    result = command.run()
+
+    query = result["queries"][0]
+
+    assert query["is_cached"] is True
+    assert query["cache_key"] == "cached-key-789"
+    assert query["cached_dttm"] == "2024-01-20T09:00:00"
+    assert query["queried_dttm"] == "2024-01-20T09:00:00"
+    assert query["rowcount"] == 50
+    assert query["sql_rowcount"] == 50
+
+
+def test_non_cached_result_has_null_cache_key() -> None:
+    """
+    Contract test: Non-cached results should have null cache key but preserve structure.
+
+    When is_cached=False:
+    - cache_key may be null or absent
+    - cached_dttm may be null
+    - queried_dttm should still be present
+    - rowcount/sql_rowcount must be present
+    - status must be present
+    - data must be present
+
+    Ensures consistent structure regardless of cache status.
+    """
+    mock_query_context = Mock(spec=QueryContext)
+    mock_query_context.result_type = ChartDataResultType.FULL
+
+    mock_query_context.get_payload.return_value = {
+        "queries": [
+            {
+                "cache_key": None,
+                "cached_dttm": None,
+                "queried_dttm": "2024-01-20T10:30:00",
+                "is_cached": False,
+                "rowcount": 25,
+                "sql_rowcount": 25,
+                "query": "SELECT fresh_data FROM table",
+                "status": "success",
+                "data": [{"id": 1}, {"id": 2}],
+            }
+        ],
+    }
+
+    command = ChartDataCommand(mock_query_context)
+    result = command.run()
+
+    query = result["queries"][0]
+
+    assert query["is_cached"] is False
+    assert query["cache_key"] is None
+    assert query["cached_dttm"] is None
+    assert query["queried_dttm"] == "2024-01-20T10:30:00"
+    assert query["rowcount"] == 25
+    assert query["sql_rowcount"] == 25
+    assert query["query"] == "SELECT fresh_data FROM table"
+    assert query["data"] == [{"id": 1}, {"id": 2}]

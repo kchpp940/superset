@@ -291,3 +291,136 @@ def test_send_http_only_https_check(monkeypatch, mock_header_data) -> None:
 
     with pytest.raises(NotificationParamException, match="HTTPS is required by config"):
         webhook_notification.send()
+
+
+def test_get_req_payload_excludes_sensitive_fields(mock_header_data) -> None:
+    """
+    Contract test: Webhook payload MUST NOT expose sensitive fields.
+    Prevents regression: owners/slack_channels/execution_id should never leak to webhook.
+    """
+    from superset.reports.models import ReportRecipients, ReportRecipientType
+    from superset.reports.notifications.base import NotificationContent
+
+    sensitive_header_data: HeaderDataType = {
+        "notification_format": "PNG",
+        "notification_type": "Alert",
+        "notification_source": "chart",
+        "chart_id": 123,
+        "dashboard_id": 456,
+        "owners": [1, 2, 3],
+        "slack_channels": ["channel-id-1", "channel-id-2"],
+        "execution_id": "sensitive-execution-uuid-12345",
+    }
+
+    content = NotificationContent(
+        name="Sensitive Data Test",
+        header_data=sensitive_header_data,
+        description="Test description",
+        url="http://example.com/report",
+        text="Report Text",
+    )
+    webhook_notification = WebhookNotification(
+        recipient=ReportRecipients(
+            type=ReportRecipientType.WEBHOOK,
+            recipient_config_json='{"target": "https://webhook.example.com/endpoint"}',
+        ),
+        content=content,
+    )
+
+    payload = webhook_notification._get_req_payload()
+
+    assert "owners" not in payload, "owners field MUST NOT be present in webhook payload"
+    assert (
+        "slack_channels" not in payload
+    ), "slack_channels field MUST NOT be present in webhook payload"
+    assert (
+        "execution_id" not in payload
+    ), "execution_id field MUST NOT be present in webhook payload"
+
+    assert "header" in payload, "header field MUST be present in webhook payload"
+    header = payload["header"]
+
+    assert (
+        "owners" not in header
+    ), "owners field MUST NOT be present in webhook header"
+    assert (
+        "slack_channels" not in header
+    ), "slack_channels field MUST NOT be present in webhook header"
+    assert (
+        "execution_id" not in header
+    ), "execution_id field MUST NOT be present in webhook header"
+
+    assert header["notification_format"] == "PNG"
+    assert header["notification_type"] == "Alert"
+    assert header["notification_source"] == "chart"
+    assert header["chart_id"] == 123
+    assert header["dashboard_id"] == 456
+
+
+def test_get_req_payload_header_contract(mock_header_data) -> None:
+    """
+    Contract test: Verify exact fields allowed in webhook header.
+    This test documents the approved API surface for webhook headers.
+    """
+    from superset.reports.models import ReportRecipients, ReportRecipientType
+    from superset.reports.notifications.base import NotificationContent
+
+    content = NotificationContent(
+        name="Contract Test",
+        header_data=mock_header_data,
+        description="Contract validation test",
+        url="http://example.com",
+    )
+    webhook_notification = WebhookNotification(
+        recipient=ReportRecipients(
+            type=ReportRecipientType.WEBHOOK,
+            recipient_config_json='{"target": "https://webhook.com"}',
+        ),
+        content=content,
+    )
+
+    payload = webhook_notification._get_req_payload()
+    header = payload["header"]
+
+    APPROVED_HEADER_FIELDS = {
+        "notification_format",
+        "notification_type",
+        "notification_source",
+        "chart_id",
+        "dashboard_id",
+    }
+
+    actual_fields = set(header.keys())
+    unexpected_fields = actual_fields - APPROVED_HEADER_FIELDS
+
+    assert (
+        unexpected_fields == set()
+    ), f"Webhook header contains unapproved fields: {unexpected_fields}. Only these fields are allowed: {APPROVED_HEADER_FIELDS}"
+
+
+def test_header_data_typed_dict_contains_sensitive_fields() -> None:
+    """
+    Documentation test: Verify HeaderDataType TypedDict includes sensitive fields.
+    This test ensures we're aware of what fields exist in the type definition.
+    """
+    import sys
+
+    if sys.version_info >= (3, 11):
+        from typing import get_type_hints
+
+        hints = get_type_hints(HeaderDataType)
+        type_keys = set(hints.keys())
+
+        assert "owners" in type_keys, "HeaderDataType should define owners"
+        assert "slack_channels" in type_keys, "HeaderDataType should define slack_channels"
+        assert "execution_id" in type_keys, "HeaderDataType should define execution_id"
+    else:
+        assert hasattr(HeaderDataType, "__annotations__")
+        annotations = HeaderDataType.__annotations__
+        assert "owners" in annotations, "HeaderDataType should define owners"
+        assert (
+            "slack_channels" in annotations
+        ), "HeaderDataType should define slack_channels"
+        assert (
+            "execution_id" in annotations
+        ), "HeaderDataType should define execution_id"

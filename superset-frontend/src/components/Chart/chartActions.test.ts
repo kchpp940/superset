@@ -340,6 +340,177 @@ describe('chart actions', () => {
       );
       expect(result).toEqual([1, 2, 3]);
     });
+
+    test('handleChartDataResponse preserves cache metadata fields in result', async () => {
+      const queryResultWithMetadata = [
+        {
+          cache_key: 'preserve-test-key-123',
+          cache_timeout: 3600,
+          cached_dttm: '2024-01-20T09:00:00',
+          queried_dttm: '2024-01-20T10:30:00',
+          rowcount: 150,
+          sql_rowcount: 150,
+          query: 'SELECT * FROM test_table WHERE active = true',
+          status: 'success',
+          is_cached: true,
+          data: [{ id: 1, value: 'test' }],
+          colnames: ['id', 'value'],
+          coltypes: [1, 2],
+          error: null,
+          stacktrace: null,
+        },
+      ];
+
+      const result = await handleChartDataResponse(
+        { status: 200 } as Response,
+        {
+          result: queryResultWithMetadata as unknown as actions.ChartDataRequestResponse['json']['result'],
+        },
+      );
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual(queryResultWithMetadata[0]);
+
+      const queryData = result[0] as typeof queryResultWithMetadata[0];
+
+      expect(queryData.cache_key).toBe('preserve-test-key-123');
+      expect(queryData.is_cached).toBe(true);
+      expect(queryData.cached_dttm).toBe('2024-01-20T09:00:00');
+      expect(queryData.queried_dttm).toBe('2024-01-20T10:30:00');
+      expect(queryData.rowcount).toBe(150);
+      expect(queryData.sql_rowcount).toBe(150);
+      expect(queryData.query).toBe('SELECT * FROM test_table WHERE active = true');
+      expect(queryData.status).toBe('success');
+      expect(queryData.data).toEqual([{ id: 1, value: 'test' }]);
+    });
+
+    test('handleChartDataResponse returns only json.result without modification', async () => {
+      const originalQueries = [
+        {
+          cache_key: 'original-cache-key',
+          is_cached: false,
+          cached_dttm: null,
+          queried_dttm: '2024-01-25T14:00:00',
+          rowcount: 5,
+          data: [{ name: 'a' }, { name: 'b' }],
+        },
+      ];
+
+      const jsonPayload = {
+        result: originalQueries as unknown as actions.ChartDataRequestResponse['json']['result'],
+        other_field: 'should_not_be_returned',
+        extra_metadata: { source: 'api_v1' },
+      };
+
+      const result = await handleChartDataResponse(
+        { status: 200 } as Response,
+        jsonPayload,
+      );
+
+      expect(result).toEqual(originalQueries);
+      expect(result).not.toHaveProperty('other_field');
+      expect(result).not.toHaveProperty('extra_metadata');
+      expect(Array.isArray(result)).toBe(true);
+      expect(result[0].cache_key).toBe('original-cache-key');
+    });
+
+    test('handleChartDataResponse preserves non-cached result structure', async () => {
+      const nonCachedQuery = [
+        {
+          cache_key: null,
+          is_cached: false,
+          cached_dttm: null,
+          queried_dttm: '2024-01-25T15:00:00',
+          rowcount: 10,
+          sql_rowcount: 10,
+          query: 'SELECT fresh_data FROM real_time_table',
+          status: 'success',
+          data: [{ col1: 'value1' }],
+        },
+      ];
+
+      const result = await handleChartDataResponse(
+        { status: 200 } as Response,
+        {
+          result: nonCachedQuery as unknown as actions.ChartDataRequestResponse['json']['result'],
+        },
+      );
+
+      expect(result[0].cache_key).toBeNull();
+      expect(result[0].is_cached).toBe(false);
+      expect(result[0].cached_dttm).toBeNull();
+      expect(result[0].queried_dttm).toBe('2024-01-25T15:00:00');
+      expect(result[0].rowcount).toBe(10);
+      expect(result[0].sql_rowcount).toBe(10);
+      expect(result[0].query).toBe('SELECT fresh_data FROM real_time_table');
+      expect(result[0].status).toBe('success');
+    });
+
+    test('handleChartDataResponse preserves multi-query metadata', async () => {
+      const multiQueryResult = [
+        {
+          cache_key: 'main-data-cache',
+          is_cached: true,
+          cached_dttm: '2024-01-20T09:00:00',
+          queried_dttm: '2024-01-20T09:00:00',
+          rowcount: 10,
+          data: [{ region: 'North' }, { region: 'South' }],
+        },
+        {
+          cache_key: 'rowcount-cache',
+          is_cached: false,
+          cached_dttm: null,
+          queried_dttm: '2024-01-20T10:30:00',
+          rowcount: 1,
+          data: [{ rowcount: 1000 }],
+        },
+      ];
+
+      const result = await handleChartDataResponse(
+        { status: 200 } as Response,
+        {
+          result: multiQueryResult as unknown as actions.ChartDataRequestResponse['json']['result'],
+        },
+      );
+
+      expect(result).toHaveLength(2);
+
+      expect(result[0].cache_key).toBe('main-data-cache');
+      expect(result[0].is_cached).toBe(true);
+      expect(result[0].cached_dttm).toBe('2024-01-20T09:00:00');
+      expect(result[0].rowcount).toBe(10);
+
+      expect(result[1].cache_key).toBe('rowcount-cache');
+      expect(result[1].is_cached).toBe(false);
+      expect(result[1].cached_dttm).toBeNull();
+      expect(result[1].rowcount).toBe(1);
+      expect(result[1].data).toEqual([{ rowcount: 1000 }]);
+    });
+
+    test('handleChartDataResponse does not modify input json object', async () => {
+      const queryResult = [
+        {
+          cache_key: 'immutable-test-key',
+          is_cached: true,
+          cached_dttm: '2024-01-20T09:00:00',
+          data: [{ id: 1 }],
+        },
+      ];
+
+      const jsonInput = {
+        result: queryResult as unknown as actions.ChartDataRequestResponse['json']['result'],
+      };
+
+      const originalQueryString = JSON.stringify(jsonInput);
+
+      const result = await handleChartDataResponse(
+        { status: 200 } as Response,
+        jsonInput,
+      );
+
+      expect(JSON.stringify(jsonInput)).toBe(originalQueryString);
+      expect(result).toEqual(queryResult);
+    });
   });
 
   // eslint-disable-next-line no-restricted-globals -- TODO: Migrate from describe blocks
