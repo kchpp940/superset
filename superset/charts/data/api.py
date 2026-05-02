@@ -69,12 +69,6 @@ from superset.utils.decorators import logs_context
 from superset.views.base import CsvResponse, generate_download_headers, XlsxResponse
 from superset.views.base_api import statsd_metrics
 
-try:
-    from superset.anomalies.injection import anomaly_injection_engine
-    ANOMALY_DETECTION_AVAILABLE = True
-except ImportError:
-    ANOMALY_DETECTION_AVAILABLE = False
-
 if TYPE_CHECKING:
     from superset.common.query_context import QueryContext
 
@@ -286,7 +280,6 @@ class ChartDataRestApi(ChartRestApi):
             datasource=query_context.datasource,
             add_extra_log_payload=add_extra_log_payload,
             dashboard_filter_context=dashboard_filter_context,
-            chart_id=pk,
         )
 
     @expose("/data", methods=("POST",))
@@ -379,15 +372,6 @@ class ChartDataRestApi(ChartRestApi):
         form_data = json_body.get("form_data")
         filename, expected_rows = self._extract_export_params_from_request()
 
-        chart_id = None
-        if form_data:
-            if isinstance(form_data, dict):
-                chart_id = form_data.get("slice_id")
-            elif isinstance(form_data, str):
-                with contextlib.suppress(json.JSONDecodeError):
-                    parsed = json.loads(form_data)
-                    chart_id = parsed.get("slice_id")
-
         return self._get_data_response(
             command,
             form_data=form_data,
@@ -395,7 +379,6 @@ class ChartDataRestApi(ChartRestApi):
             add_extra_log_payload=add_extra_log_payload,
             filename=filename,
             expected_rows=expected_rows,
-            chart_id=chart_id,
         )
 
     @expose("/data/<cache_key>", methods=("GET",))
@@ -498,7 +481,6 @@ class ChartDataRestApi(ChartRestApi):
         filename: str | None = None,
         expected_rows: int | None = None,
         dashboard_filter_context: DashboardFilterContext | None = None,
-        chart_id: int | None = None,
     ) -> Response:
         result_type = result["query_context"].result_type
         result_format = result["query_context"].result_format
@@ -566,18 +548,6 @@ class ChartDataRestApi(ChartRestApi):
             if dashboard_filter_context is not None:
                 payload["dashboard_filters"] = dashboard_filter_context.to_dict()
 
-            if ANOMALY_DETECTION_AVAILABLE and chart_id is not None:
-                try:
-                    anomaly_results = anomaly_injection_engine.inject_anomaly_results(
-                        chart=None,
-                        queries_result=queries,
-                        chart_id=chart_id,
-                    )
-                    if anomaly_results.get("has_anomaly_rules"):
-                        payload["anomaly_detection"] = anomaly_results
-                except Exception as ex:
-                    logger.warning("Anomaly detection injection failed: %s", str(ex))
-
             with event_logger.log_context(f"{self.__class__.__name__}.json_dumps"):
                 response_data = json.dumps(
                     payload,
@@ -620,7 +590,6 @@ class ChartDataRestApi(ChartRestApi):
         expected_rows: int | None = None,
         add_extra_log_payload: Callable[..., None] | None = None,
         dashboard_filter_context: DashboardFilterContext | None = None,
-        chart_id: int | None = None,
     ) -> Response:
         """Get data response and optionally log is_cached information."""
         try:
@@ -642,7 +611,6 @@ class ChartDataRestApi(ChartRestApi):
             filename,
             expected_rows,
             dashboard_filter_context=dashboard_filter_context,
-            chart_id=chart_id,
         )
 
     def _extract_export_params_from_request(self) -> tuple[str | None, int | None]:
