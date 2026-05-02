@@ -111,6 +111,7 @@ export const RENDER_TRIGGERED = 'RENDER_TRIGGERED' as const;
 export const UPDATE_QUERY_FORM_DATA = 'UPDATE_QUERY_FORM_DATA' as const;
 export const UPDATE_CHART_ID = 'UPDATE_CHART_ID' as const;
 export const ADD_CHART = 'ADD_CHART' as const;
+export const ANOMALY_DETECTION_UPDATED = 'ANOMALY_DETECTION_UPDATED' as const;
 
 // Action interfaces
 export interface ChartUpdateStartedAction {
@@ -212,6 +213,12 @@ export interface AddChartAction {
   key: string | number;
 }
 
+export interface AnomalyDetectionUpdatedAction {
+  type: typeof ANOMALY_DETECTION_UPDATED;
+  anomalyDetection: unknown;
+  key: string | number;
+}
+
 export type ChartAction =
   | ChartUpdateStartedAction
   | ChartUpdateSucceededAction
@@ -228,7 +235,8 @@ export type ChartAction =
   | RenderTriggeredAction
   | UpdateQueryFormDataAction
   | UpdateChartIdAction
-  | AddChartAction;
+  | AddChartAction
+  | AnomalyDetectionUpdatedAction;
 
 // Type for thunk actions
 export type ChartThunkDispatch = ThunkDispatch<RootState, undefined, AnyAction>;
@@ -380,6 +388,17 @@ export function annotationQueryFailed(
   key: string | number,
 ): AnnotationQueryFailedAction {
   return { type: ANNOTATION_QUERY_FAILED, annotation, queryResponse, key };
+}
+
+export function anomalyDetectionUpdated(
+  anomalyDetection: unknown,
+  key: string | number,
+): AnomalyDetectionUpdatedAction {
+  return {
+    type: ANOMALY_DETECTION_UPDATED,
+    anomalyDetection,
+    key,
+  };
 }
 
 export const dynamicPluginControlsReady =
@@ -776,11 +795,20 @@ export function exploreJSON(
     });
 
     const [useLegacyApi] = getQuerySettings(formData);
+    let fullJson: { result: QueryData[]; anomaly_detection?: unknown } | null = null;
+    
     const chartDataRequestCaught = chartDataRequest
-      .then(({ response, json }) =>
-        handleChartDataResponse(response, json, useLegacyApi),
-      )
+      .then(({ response, json }) => {
+        fullJson = json as { result: QueryData[]; anomaly_detection?: unknown };
+        return handleChartDataResponse(response, json, useLegacyApi);
+      })
       .then(queriesResponse => {
+        if (fullJson?.anomaly_detection) {
+          dispatch(
+            anomalyDetectionUpdated(fullJson.anomaly_detection, key as string | number),
+          );
+        }
+        
         (queriesResponse as QueryData[]).forEach(
           (resultItem: QueryData & { applied_filters?: JsonObject[] }) =>
             dispatch(

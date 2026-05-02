@@ -589,6 +589,8 @@ class BaseReportState:
         dashboard_id = None
         report_source = None
         slack_channels = None
+        anomaly_detection = None
+
         if self._report_schedule.chart:
             report_source = ReportSourceFormat.CHART
             chart_id = self._report_schedule.chart_id
@@ -604,6 +606,49 @@ class BaseReportState:
                 in [ReportRecipientType.SLACK, ReportRecipientType.SLACKV2]
             ]
 
+        if chart_id:
+            try:
+                from superset.anomalies.detector import anomaly_detector
+                from superset.daos.anomaly import AnomalyRuleDAO
+                from superset.anomalies.models import AnomalyRuleStatus
+
+                rules = AnomalyRuleDAO.find_by_chart_id(chart_id)
+                active_rules = [r for r in rules if r.status == AnomalyRuleStatus.ACTIVE]
+
+                if active_rules:
+                    anomaly_rules_info = []
+                    has_anomalies = False
+                    total_anomaly_count = 0
+
+                    for rule in active_rules:
+                        rule_info = {
+                            "rule_id": rule.id,
+                            "rule_name": rule.name,
+                            "metric": rule.metric,
+                            "rule_type": rule.rule_type,
+                            "last_anomaly_at": rule.last_anomaly_at.isoformat()
+                            if rule.last_anomaly_at
+                            else None,
+                            "last_anomaly_value": rule.last_anomaly_value,
+                            "last_anomaly_message": rule.last_anomaly_message,
+                        }
+
+                        if rule.last_anomaly_at:
+                            has_anomalies = True
+                            total_anomaly_count += 1
+
+                        anomaly_rules_info.append(rule_info)
+
+                    anomaly_detection = {
+                        "has_anomaly_rules": True,
+                        "has_anomalies": has_anomalies,
+                        "anomaly_rules_count": len(active_rules),
+                        "anomalies_count": total_anomaly_count,
+                        "rules": anomaly_rules_info,
+                    }
+            except Exception as ex:
+                logger.warning("Failed to get anomaly detection info for report: %s", str(ex))
+
         log_data: HeaderDataType = {
             "notification_type": self._report_schedule.type,
             "notification_source": report_source,
@@ -613,6 +658,7 @@ class BaseReportState:
             "owners": self._report_schedule.owners,
             "slack_channels": slack_channels,
             "execution_id": str(self._execution_id),
+            "anomaly_detection": anomaly_detection,
         }
         return log_data
 

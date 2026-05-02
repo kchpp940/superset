@@ -46,6 +46,8 @@ import { getSliceHeaderTooltip } from 'src/dashboard/util/getSliceHeaderTooltip'
 import { DashboardPageIdContext } from 'src/dashboard/containers/DashboardPage';
 import RowCountLabel from 'src/components/RowCountLabel';
 import { Link } from 'react-router-dom';
+import type { AnomalyDetection } from 'src/features/anomalies/types';
+import AnomalyBadge from 'src/features/anomalies/AnomalyBadge';
 
 const extensionsRegistry = getExtensionsRegistry();
 
@@ -202,6 +204,10 @@ const SliceHeader = forwardRef<HTMLDivElement, SliceHeaderProps>(
       state => state.charts[slice.slice_id].queriesResponse?.[1],
     );
 
+    const anomalyDetection = useSelector<RootState, AnomalyDetection | undefined>(
+      state => (state.charts[slice.slice_id] as { anomalyDetection?: AnomalyDetection })?.anomalyDetection,
+    );
+
     const theme = useTheme();
 
     const rowLimit = Number(formData.row_limit ?? 0);
@@ -325,6 +331,12 @@ const SliceHeader = forwardRef<HTMLDivElement, SliceHeaderProps>(
               {!uiConfig.hideChartControls && (
                 <CustomizationsBadge chartId={slice.slice_id} />
               )}
+
+              <AnomalyBadge
+                anomalyDetection={anomalyDetection}
+                chartId={slice.slice_id}
+                dashboardId={dashboardId}
+              />
 
               {!uiConfig.hideChartControls && (
                 <FiltersBadge chartId={slice.slice_id} />

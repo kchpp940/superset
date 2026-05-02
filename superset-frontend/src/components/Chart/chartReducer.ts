@@ -185,6 +185,12 @@ export default function chartReducer(
         annotationQuery,
       };
     },
+    [actions.ANOMALY_DETECTION_UPDATED](state) {
+      return {
+        ...state,
+        anomalyDetection: action.anomalyDetection,
+      };
+    },
   };
 
   /* eslint-disable no-param-reassign */
